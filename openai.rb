@@ -1,8 +1,8 @@
 #!/usr/bin/env ruby
 
 require "optparse"
-require "openai"
 require "net/http"
+require "json"
 
 def debug(message)
   puts "\e[31m#{message}\e[0m"

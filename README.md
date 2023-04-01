@@ -1,10 +1,6 @@
 # OpenAI CLI
 This is a command-line interface (CLI) for making requests to OpenAI's GPT-3 language model.
-The CLI is implemented in Ruby and uses the OpenAI Ruby gem to interface with the OpenAI API.
-
-## Requirements
-The CLI requires Ruby and the OpenAI Ruby gem.
-You can install the gem using gem install openai.
+The CLI is implemented in Ruby and uses the net/http gem to interface with the OpenAI API.
 
 ## `--help`
 
@@ -22,6 +18,10 @@ ChatGPT request parameters:
     -n, --n N                        Set the number of completions to generate (default: 1)
         --stop STOP                  Set the stop sequence
     -p, --temperature TEMPERATURE    Set the sampling temperature (default: 0.5)
+
+Specifying all paramters from a file
+    -r, --read-options FILE          Read GPT parameters from a JSON file
+    -w, --write-options FILE         Save the GPT parameters to a JSON file
 
 General options:
     -k, --api-key KEY                Set the OpenAI API key (default: OPENAI_API_KEY from env or nil)
@@ -46,7 +46,6 @@ You can use the -j or --json flag to return the full raw response as JSON, or th
 
 ## Example
 ```
-% gem install openai
 % export OPENAI_API_KEY=<your-api-key>
 
 % ruby openai.rb -s "You are a helpful agent that answers exclusively in Japanese." -u "What is 1+1?"
