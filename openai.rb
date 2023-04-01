@@ -180,7 +180,7 @@ class OpenAICLI
       end
 
       opts.on("-S", "--system-prompt-file FILE", "Set the system prompt based on the contents of FILENAME.") do |file|
-        if opts.key?[:system_prompt]
+        if options.key?(:system_prompt)
           warn "WARNING: Both --system-prompt and --system-prompt-file were provided."
           exit(1)
         end
@@ -192,7 +192,7 @@ class OpenAICLI
       end
 
       opts.on("-U", "--user-prompt-file FILE", "Set the user prompt based on the contents of FILENAME.") do |file|
-        if opts.key?[:user_prompt]
+        if options.key?(:user_prompt)
           warn "WARNING: Both --user-prompt and --user-prompt-file were provided."
           exit(1)
         end
