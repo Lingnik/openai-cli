@@ -216,6 +216,24 @@ class OpenAICLI
       end
 
       opts.separator ""
+      opts.separator "Specifying all paramters from a file"
+
+      opts.on("-r", "--read-options FILE", "Read GPT parameters from a JSON file") do |file|
+        json_options = JSON.parse(File.read(file), symbolize_names: true)
+        options.merge!(json_options)
+      end
+
+      opts.on("-w", "--write-options FILE", "Save the GPT parameters to a JSON file") do |file|
+        options_to_save = options.dup
+        options_to_save.delete(:api_key)
+        options_to_save.delete(:json)
+        options_to_save.delete(:stream)
+        File.write(file, JSON.pretty_generate(options_to_save))
+        puts "Options saved to '#{file}'."
+        exit
+      end
+
+      opts.separator ""
       opts.separator "General options:"
 
       opts.on("-k", "--api-key KEY", "Set the OpenAI API key (default: OPENAI_API_KEY from env or nil)") do |key|
