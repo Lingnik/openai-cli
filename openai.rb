@@ -32,6 +32,7 @@ module OpenAI
     def chat
       write_option = options[:write]
       chat_options = options.dup
+      
       # If -r/--read was provided, merge options in from the specified file.
       chat_options.merge!(JSON.parse(File.read(options[:read]))) if options[:read]
 
@@ -66,10 +67,29 @@ module OpenAI
     method_option :model, :aliases => "-m", type: :string, :required => true, banner: "whisper-1", default: ENV.fetch("OPENAI_TRANSCRIBE_MODEL", "whisper-1"), desc: "Set the OpenAI model name (default: env OPENAI_MODEL || whisper-1)"
     method_option :file, :aliases => "-f", type: :string, :required => true, banner: "file", desc: "The audio file to transcribe (mp3, mp4, mpeg, mpga, m4a, wav, or webm)"
     method_option :prompt, :aliases => "-p", type: :string, desc: "Optional text to guide the model's style or continue a previous audio segment"
+    method_option :prompt_is_file, :aliases => "-P", type: :boolean, desc: "Treat --prompt as a filename; use its contents as the prompt"
     method_option :output, :aliases => "-o", type: :string, desc: "The format of the transcript output (json, text, srt, verbose_json, or vtt)"
     method_option :temperature, :aliases => "-p", type: :numeric, in: 0.0..1.0, banner: "0.0", default: 0.0, desc: 'Set the sampling temperature; lower=deterministic/higher=random (default: 0.0=dynamic)'
     method_option :language, :aliases => "-l", type: :string, desc: "The language of the input audio in ISO-639-1 format"
     def transcribe
+      write_option = options[:write]
+      transcribe_options = options.dup
+
+      # If -r/--read was provided, merge options in from the specified file.
+      transcribe_options.merge!(JSON.parse(File.read(options[:read]))) if options[:read]
+
+      transcribe_options[:prompt] = options[:prompt_is_file] ? File.read(transcribe_options[:prompt]) : transcribe_options[:prompt]
+
+      # If -w was provided, marshal all options to a file and exit. Skip sensitive options.
+      if options[:write]
+        transcribe_options.delete(:api_key)
+        transcribe_options.delete(:write)
+        json_opts = JSON.pretty_generate(transcribe_options)
+        File.write(write_option, json_opts)
+        puts "Successfully wrote options to file \"#{write_option}\"."
+        exit(0)
+      end
+
       client = API::TranscribeClient.new(options)
       response = client.request
 
