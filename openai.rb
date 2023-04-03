@@ -1,8 +1,9 @@
 #!/usr/bin/env ruby
-# oo <args>
+# openai.rb <args>
 require "optparse"
 require "thor"
-require_relative "api/chat"
+require_relative "lib/api/chat"
+require_relative "lib/api/transcription"
 require_relative "lib/thor_option_monkey_patch"
 
 def debug(msg)
