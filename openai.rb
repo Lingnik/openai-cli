@@ -1,281 +1,92 @@
 #!/usr/bin/env ruby
-
+# oo <args>
 require "optparse"
-require "net/http"
-require "json"
+require "thor"
+require_relative "api/chat"
+require_relative "lib/thor_option_monkey_patch"
 
-def debug(message)
-  puts "\e[31m#{message}\e[0m"
+def debug(msg)
+  warn msg
 end
 
-class OpenAIClient
-  def initialize(api_key)
-    @api_key = api_key
-  end
+module OpenAI
+  class CLI < Thor
+    class_option :api_key, :aliases => "-a", type: :string, banner: "your_api_key", desc: 'Set the OpenAI API key (if unset, env OPENAI_API_KEY)'
+    class_option :json, :aliases => "-j", type: :boolean, default: false, desc: 'Return the full raw response as JSON'
 
-  def prompt_openai(options = {})
-    request = Net::HTTP::Post.new(
-      URI("https://api.openai.com/v1/chat/completions"),
-      'Content-Type' => 'application/json',
-      'Authorization' => "Bearer #{@api_key}"
-    )
-    request.body = body_for_options(options)
+    class_option :write, :aliases => "-w", type: :string, banner: "openai.json", desc: 'Save parameters to a JSON file'
+    class_option :read, :aliases => "-r", type: :string, banner: "openai.json", desc: 'Read parameters from a JSON file'
 
-    if options.key?(:stream) && options[:stream]
-      # Streaming prompts return in chunks.
-      request_streaming(request, options[:json])
-    else
-      # JSON/Text prompts return immediately, after processing and network latency.
-      request_non_streaming(request)
-    end
-  end
+    desc 'chat', 'Interact with OpenAI GPT via the command line'
+    method_option :model, :required => true, :aliases => "-m", type: :string, banner: "gpt-4", default: ENV.fetch("OPENAI_MODEL", "gpt-3.5-turbo"), desc: "Set the OpenAI model name (default: env OPENAI_MODEL || gpt-3.5-turbo)"
+    method_option :system, :required => true, :aliases => "-s", type: :string, banner: "\"prompt\"", desc: 'Set the system prompt'
+    method_option :user, :required => true, :aliases => "-u", type: :string, banner: "\"prompt\"", desc: 'Set the user prompt'
+    method_option :max_tokens, :aliases => "-t", type: :numeric, banner: "1000", default: 1000, desc: 'Set the maximum number of tokens to generate (default: 1000)'
+    method_option :num_completions, :aliases => "-n", type: :numeric, banner: "1", default: 1, desc: 'Set the number of completions to generate (default: 1)'
+    method_option :temperature, :aliases => "-p", type: :numeric, in: 0.0..2.0, banner: "0.5", default: 0.5, desc: 'Set the sampling temperature; lower=deterministic/higher=random (default: 0.5)'
+    method_option :stop, :aliases => "-q", type: :array, repeatable: true, max: 4, banner: "\"###STOP###\"", desc: "Set up to four stop sequence(s) (default: none)\n\nChat CLI Options:"
+    method_option :system_is_file, :aliases => "-S", type: :boolean, desc: "Treat --system as a filename; use its contents as the system prompt"
+    method_option :user_is_file, :aliases => "-U", type: :boolean, desc: 'Treat --user as a filename; use its contents as the user prompt'
+    method_option :stream, :aliases => "-l", type: :boolean, default: false, desc: "Stream the response in real-time\n\nGlobal Options:"
+    def chat
+      write_option = options[:write]
+      chat_options = options.dup
+      # If -r/--read was provided, merge options in from the specified file.
+      chat_options.merge!(JSON.parse(File.read(options[:read]))) if options[:read]
 
-  private
+      # If -S or -U were provided, read the system/user prompts from the specified file/s.
+      chat_options[:system_prompt] = options[:system_is_file] ? File.read(chat_options[:system]) : chat_options[:system]
+      chat_options[:user_prompt] = options[:user_is_file] ? File.read(chat_options[:user]) : chat_options[:user]
 
-  def request_streaming(request, stream_as_json=false)
-    collected_chunks = []
-
-    if stream_as_json == true
-      puts "["
-    end
-    first = true
-    Net::HTTP.start(request.uri.host, request.uri.port, use_ssl: true) do |http|
-      http.request(request) do |response|
-
-        if !response.content_type == "text/event-stream"
-          warn JSON.parse(response.body)
-          raise "Unexpected response content type, expected text/event-stream: #{response.content_type}"
-        end
-
-        buffer = ""
-        response.read_body do |chunk|
-          buffer += chunk
-          while line = buffer.slice!(/.+\r?\n/)
-            next if line.strip.empty?
-            next unless line.start_with?("data: ")
-            data = line[6..-1].strip
-            next if data == "[DONE]"
-
-            # Parse the data as JSON, add it as a chunk, print its content.
-            parsed_chunk = JSON.parse(data)
-            collected_chunks << parsed_chunk
-            if stream_as_json == true
-              if first
-                first = false
-              else
-                print ",\n"
-              end
-              print "  #{parsed_chunk}"
-                $stdout.flush
-            else
-              if parsed_chunk["choices"] &&
-                  parsed_chunk["choices"][0] &&
-                  parsed_chunk["choices"][0]["delta"] &&
-                  parsed_chunk["choices"][0]["delta"]["content"]
-                print parsed_chunk["choices"][0]["delta"]["content"]
-                $stdout.flush
-              end
-            end
-          end
-        end
-        puts ""
-      end
-    end
-    if stream_as_json == true
-      puts "]"
-    end
-
-    collected_chunks
-  end
-
-  def request_non_streaming(request)
-    response = Net::HTTP.start(request.uri.host, request.uri.port, use_ssl: true) do |http|
-      http.request(request)
-    end
-    response_json = JSON.parse(response.body)
-    if response.is_a?(Net::HTTPSuccess)
-      response_json
-    else
-      warn response_json
-      raise StandardError, "Error"
-    end
-  end
-
-  def body_for_options(options = {})
-    {
-      "model": options[:model],
-      "messages": [
-        {
-          "role": "system",
-          "content": options[:system_prompt]
-        },
-        {
-          "role": "user",
-          "content": options[:user_prompt]
-        }
-      ],
-      "max_tokens": options[:max_tokens],
-      "n": options[:n],
-      "stop": options[:stop],
-      "temperature": options[:temperature],
-      "stream": options[:stream]
-    }.to_json
-  end
-
-end
-
-
-class OpenAICLI
-
-  def self.main
-    options = parse_options 
-
-    # Instantiate the OpenAIClient module
-    client = OpenAIClient.new(options[:api_key])
-    options.delete(:api_key) # Keep it secret. Keep it safe.
-
-    # Call the prompt_openai method
-    #begin
-    response = client.prompt_openai(options)
-
-    if options[:stream]
-      # The results have already been streamed, so do nothing.
-      #puts response.map { |e| e["choices"][0]["delta"]&.fetch("content", "") }.reject(&:empty?).join
-    elsif options[:json]
-      puts JSON.pretty_generate(response)
-    else
-      puts response["choices"][0]["message"]["content"]
-    end
-    #rescue => e
-    #  puts "Error: #{e.message}"
-    #  puts e.backtrace if ENV["DEBUG"] == "true"
-    #  exit(1)
-    #end
-  end
-
-  private
-  
-  def self.parse_options 
-    options = {
-      :api_key => ENV["OPENAI_API_KEY"],
-      :model => ENV["OPENAI_MODEL"] || "gpt-3.5-turbo",
-      :max_tokens => 1000,
-      :n => 1,
-      :temperature => 0.5,
-      :stream => false
-    }
-
-    parser = OptionParser.new do |opts|
-      opts.banner = "Usage: openai [options]"
-
-      opts.separator ""
-      opts.separator "ChatGPT request parameters:"
-
-      opts.on("-m", "--model MODEL", "Set the OpenAI model name (default: OPENAI_MODEL from env or gpt-3.5-turbo)") do |model|
-        options[:model] = model
+      # If -w was provided, marshal all options to a file and exit. Skip sensitive options.
+      if options[:write]
+        chat_options.delete(:api_key)
+        chat_options.delete(:write)
+        json_opts = JSON.pretty_generate(chat_options)
+        File.write(write_option, json_opts)
+        puts "Successfully wrote options to file \"#{write_option}\"."
+        exit(0)
       end
 
-      opts.on("-s", "--system-prompt PROMPT", "Set the system prompt") do |prompt|
-        options[:system_prompt] = prompt
-      end
+      client = API::ChatClient.new(chat_options)
+      response = client.request
 
-      opts.on("-S", "--system-prompt-file FILE", "Set the system prompt based on the contents of FILENAME.") do |file|
-        if options.key?(:system_prompt)
-          warn "WARNING: Both --system-prompt and --system-prompt-file were provided."
-          exit(1)
-        end
-        options[:system_prompt] = File.read(file)
-      end
-
-      opts.on("-u", "--user-prompt PROMPT", "Set the user prompt") do |prompt|
-        options[:user_prompt] = prompt
-      end
-
-      opts.on("-U", "--user-prompt-file FILE", "Set the user prompt based on the contents of FILENAME.") do |file|
-        if options.key?(:user_prompt)
-          warn "WARNING: Both --user-prompt and --user-prompt-file were provided."
-          exit(1)
-        end
-        options[:user_prompt] = File.read(file) 
-      end
-
-      opts.on("-t", "--max-tokens TOKENS", Integer, "Set the maximum number of tokens to generate (default: 1000)") do |tokens|
-        options[:max_tokens] = tokens
-      end
-
-      opts.on("-n", "--n N", Integer, "Set the number of completions to generate (default: 1)") do |n|
-        options[:n] = n
-      end
-
-      opts.on("--stop STOP", "Set the stop sequence") do |stop|
-        options[:stop] = stop
-      end
-
-      opts.on("-p", "--temperature TEMPERATURE", Float, "Set the sampling temperature (default: 0.5)") do |temperature|
-        options[:temperature] = temperature
-      end
-
-      opts.separator ""
-      opts.separator "Specifying all paramters from a file"
-
-      opts.on("-r", "--read-options FILE", "Read GPT parameters from a JSON file") do |file|
-        json_options = JSON.parse(File.read(file), symbolize_names: true)
-        options.merge!(json_options)
-      end
-
-      opts.on("-w", "--write-options FILE", "Save the GPT parameters to a JSON file") do |file|
-        options_to_save = options.dup
-        options_to_save.delete(:api_key)
-        options_to_save.delete(:json)
-        options_to_save.delete(:stream)
-        File.write(file, JSON.pretty_generate(options_to_save))
-        puts "Options saved to '#{file}'."
-        exit
-      end
-
-      opts.separator ""
-      opts.separator "General options:"
-
-      opts.on("-k", "--api-key KEY", "Set the OpenAI API key (default: OPENAI_API_KEY from env or nil)") do |key|
-        options[:api_key] = key
-      end
-
-      opts.on("-j", "--json", "Return the full raw response as JSON") do
-        options[:json] = true
-      end
-
-      opts.on("-l", "--stream", "--live", "Stream the response in realtime.") do
-        options[:stream] = true
-      end
-
-      opts.on("-h", "--help", "Prints this help") do
-        puts opts
-        exit
-      end
-    end
-
-    parser.parse!
-
-    missing_options = [:api_key, :system_prompt, :user_prompt].select { |opt| !options[opt] }
-
-    # Check if required options are present
-    if !missing_options.empty?
-      err = "Missing required options: #{missing_options.join(', ')}"
-      if $stdout.tty? && ENV['TERM'] != 'dumb'
-        warn "\e[31m#{err}\e[0m"
+      if chat_options[:stream]
+        # The results have already been streamed, so do nothing.
+        # puts response.map { |e| e["choices"][0]["delta"]&.fetch("content", "") }.reject(&:empty?).join
+      elsif chat_options[:json]
+        puts JSON.pretty_generate(response)
       else
-        warn err
+        puts response["choices"][0]["message"]["content"]
       end
-      puts ""
-      puts parser.help
-      exit(1)
     end
 
-    options
+    desc 'transcribe', 'Interact with OpenAI Whisper via the command line'
+    method_option :model, :aliases => "-m", type: :string, :required => true, banner: "whisper-1", default: ENV.fetch("OPENAI_TRANSCRIBE_MODEL", "whisper-1"), desc: "Set the OpenAI model name (default: env OPENAI_MODEL || whisper-1)"
+    method_option :file, :aliases => "-f", type: :string, :required => true, banner: "file", desc: "The audio file to transcribe (mp3, mp4, mpeg, mpga, m4a, wav, or webm)"
+    method_option :prompt, :aliases => "-p", type: :string, desc: "Optional text to guide the model's style or continue a previous audio segment"
+    method_option :output, :aliases => "-o", type: :string, desc: "The format of the transcript output (json, text, srt, verbose_json, or vtt)"
+    method_option :temperature, :aliases => "-p", type: :numeric, in: 0.0..1.0, banner: "0.0", default: 0.0, desc: 'Set the sampling temperature; lower=deterministic/higher=random (default: 0.0=dynamic)'
+    method_option :language, :aliases => "-l", type: :string, desc: "The language of the input audio in ISO-639-1 format"
+    def transcribe
+      client = API::TranscribeClient.new(options)
+      response = client.request
+
+      if options[:json]
+        puts JSON.pretty_generate(response)
+      else
+        puts JSON.pretty_generate(response)
+        puts response["choices"][0]["message"]["content"]
+      end
+    end
+
+    def self.exit_on_failure?
+      true
+    end
+
   end
 
 end
 
-OpenAICLI.main
-
-
+o = OpenAI::CLI
+o.start(ARGV)
