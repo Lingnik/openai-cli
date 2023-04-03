@@ -1,5 +1,3 @@
-require_relative "custom_thor"
-
 # thor_option_monkey_patch.rb
 module ThorOptionMonkeyPatch
 
